@@ -1,31 +1,28 @@
+from dataclasses import dataclass
+
 from jumpstarter.client import DriverClient
-from contextlib import contextmanager
-from collections.abc import AsyncGenerator
 
 
-# client classes are based on the DriverClient base class
-class ExampleCustomClient(DriverClient):
-    def configure(self, param1: float, param2: str, param3: list[float]) -> None:
-        # the `call` method is provided by the DriverClient base class
-        # for calling into the driver by method name
-        self.call("configure", param1, param2, param3)
+@dataclass(kw_only=True)
+class TftpServerClient(DriverClient):
+    """Client interface for TFTP Server driver"""
 
-    def slow_task(self, seconds: float) -> str:
-        # both blocking and async driver methods can be called from the client in the same way
-        return self.call("slow_task", seconds)
+    def start(self) -> str:
+        """Start the TFTP server"""
+        return self.call("start")
 
-    def slow_generator(self) -> AsyncGenerator[float]:
-        # generator methods (blocking or async) MUST be called with the `streamingcall` method
-        yield from self.streamingcall("slow_generator")
+    def stop(self) -> str:
+        """Stop the TFTP server"""
+        return self.call("stop")
 
-    # additional methods can be provided as appropriate
-    def combined_action(self) -> None:
-        result = self.slow_task(0.1)
-        self.configure(1.0, result, [3.0, 4.0])
+    def list_files(self) -> list[str]:
+        """List files in TFTP root directory"""
+        return self.call("list_files")
 
-    # "stream" methods SHOULD be context managers to manage the lifecycle of the streams
-    @contextmanager
-    def random_stream(self):
-        # new streams can be created with the provided `stream` method
-        with self.stream(method="random_stream") as stream:
-            yield stream
+    def put_file(self, filename: str, content: bytes) -> str:
+        """Put a file directly into the TFTP root directory"""
+        return self.call("put_file", filename, content)
+
+    def delete_file(self, filename: str) -> str:
+        """Delete a file from TFTP root directory"""
+        return self.call("delete_file", filename)

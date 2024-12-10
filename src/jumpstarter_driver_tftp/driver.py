@@ -1,79 +1,89 @@
-from dataclasses import dataclass
-from anyio.streams.file import FileReadStream
-from itertools import count
-from anyio import sleep
-from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
+import os
+import tftpy
+import threading
+from typing import Optional, Union
+from jumpstarter.driver import Driver, export
 
-from jumpstarter.driver import Driver, export, exportstream
-from jumpstarter.drivers.power.driver import PowerInterface
-from jumpstarter.drivers.power.common import PowerReading
-from collections.abc import Generator, AsyncGenerator
-import logging
+@dataclass(kw_only=True)
+class TftpServer(Driver):
+    """TFTP Server driver for Jumpstarter"""
 
-# drivers SHOULD use standrd python logging
-logger = logging.getLogger(__name__)
+    root_dir: str
+    host: str = "0.0.0.0"
+    port: int = 6969
+    server: Optional[tftpy.TftpServer] = field(init=False, default=None)
+    server_thread: Optional[threading.Thread] = field(init=False, default=None)
 
-
-class ExamplePower(PowerInterface, Driver):
-    """
-    Example driver implementing predefined interface
-    """
-
-    @export  # driver methods MUST be marked with the `export` decorator
-    def on(self) -> str:
-        return "power turned on"
-
-    @export
-    def off(self) -> str:
-        return "power turned off"
-
-    @export  # driver methods CAN be regular functions or generator functions
-    def read(self) -> Generator[PowerReading]:
-        for i in count():
-            yield PowerReading(
-                voltage=5.0,
-                current=i,
-            )
-
-
-@dataclass(kw_only=True)  # drivers taking config values SHOULD be kw_only dataclasses
-class ExampleCustom(Driver):
-    """
-    Example driver implementing custom interface
-    """
-
-    # config values would be automatically initialized from the exporter config
-    configured_message: str
-
-    # required classmethod returning the import path of corresponding client class
     @classmethod
     def client(cls) -> str:
-        # roughly equals "from jumpstarter_driver_tftp.client import ExampleCustomClient"
-        # see `client.py` for implementation
-        return "jumpstarter_driver_tftp.client.ExampleCustomClient"
+        return "jumpstarter_driver_tftp.client.TftpServerClient"
 
-    # driver methods can take positional arguments
+    def __post_init__(self):
+        super().__post_init__()
+        # Ensure root directory exists
+        os.makedirs(self.root_dir, exist_ok=True)
+        # Create server instance
+        self.server = tftpy.TftpServer(self.root_dir)
+
+    def __start_server(self):
+        """Helper method to run server in thread"""
+        self.server.listen(self.host, self.port)
+
     @export
-    def configure(self, param1: float, param2: str, param3: list[float]) -> None:
-        # e.g. configure the device with parameters
-        logger.info(f"configure called with parameters: {param1}, {param2}, {param3}")
+    def start(self) -> str:
+        """Start the TFTP server"""
+        if self.server_thread is not None:
+            return "Server already running"
 
-    # driver methods can be async functions
+        self.server_thread = threading.Thread(
+            target=self.__start_server,
+            daemon=True
+        )
+        self.server_thread.start()
+        return "Server started"
+
     @export
-    async def slow_task(self, seconds: float) -> str:
-        await sleep(seconds)
-        return f"slept for {seconds} seconds, message: {self.configured_message}"
+    def stop(self) -> str:
+        """Stop the TFTP server"""
+        if self.server_thread is None:
+            return "Server not running"
 
-    # or async generators
+        if self.server:
+            self.server.stop()
+            self.server_thread.join()
+            self.server_thread = None
+        return "Server stopped"
+
     @export
-    async def slow_generator(self) -> AsyncGenerator[float]:
-        for i in count():
-            await sleep(0.1)
-            yield i
+    def list_files(self) -> list[str]:
+        """List files in TFTP root directory"""
+        return os.listdir(self.root_dir)
 
-    # special "stream" methods can return raw byte streams based on any io streams
-    @exportstream  # they are marked with the `exportstream` decorator
-    @asynccontextmanager  # and the `asynccontextmanager` decorator for managing the lifecycle of the stream
-    async def random_stream(self):
-        async with await FileReadStream.from_path("/dev/urandom") as stream:
-            yield stream
+    @export
+    def put_file(self, filename: str, content: Union[str, bytes]) -> str:
+        """Put a file directly into the TFTP root directory"""
+        try:
+            file_path = os.path.join(self.root_dir, filename)
+            file_content = content if isinstance(content, bytes) else content.encode('utf-8')
+            with open(file_path, 'wb') as f:
+                f.write(file_content)
+            return f"Created {filename}"
+        except Exception as e:
+            return f"Error creating {filename}: {str(e)}"
+
+    @export
+    def delete_file(self, filename: str) -> str:
+        """Delete a file from TFTP root directory"""
+        try:
+            os.remove(os.path.join(self.root_dir, filename))
+            return f"Deleted {filename}"
+        except FileNotFoundError:
+            return f"File {filename} not found"
+        except Exception as e:
+            return f"Error deleting {filename}: {str(e)}"
+
+    def close(self):
+        """Clean up when driver is closed"""
+        self.stop()
+        super().close()
