@@ -48,9 +48,9 @@ class ExampleCustom(Driver):
     # required classmethod returning the import path of corresponding client class
     @classmethod
     def client(cls) -> str:
-        # roughly equals "from jumpstarter_driver_template.client import ExampleCustomClient"
+        # roughly equals "from jumpstarter_driver_tftp.client import ExampleCustomClient"
         # see `client.py` for implementation
-        return "jumpstarter_driver_template.client.ExampleCustomClient"
+        return "jumpstarter_driver_tftp.client.ExampleCustomClient"
 
     # driver methods can take positional arguments
     @export
